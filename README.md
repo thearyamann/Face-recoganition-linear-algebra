@@ -81,6 +81,7 @@ python concepts/06_pca_dimension_reduction.py
 python concepts/07_visualize_vector_space.py
 python concepts/08_live_webcam_recognition.py
 python concepts/09_neural_network_matrix_demo.py
+python concepts/10_collect_webcam_dataset.py
 ```
 
 ## Concept Guide
@@ -137,6 +138,12 @@ y = W x + b
 
 - Prints shapes and saves a compact visualization of the matrices.
 
+### 10 Collect Webcam Dataset
+- Opens the laptop webcam.
+- Guides you through `5-10` useful face poses.
+- Saves new cropped face images directly into `data/Aryamann/`.
+- Helps you build a stronger training dataset for live recognition.
+
 ## Output Files
 
 The scripts automatically create:
@@ -163,4 +170,4 @@ This project follows the same story you might tell in a teaching video:
 - Unreadable files are skipped automatically with a console message.
 - The webcam demo depends on local camera permissions and available hardware.
 - Saved models in `outputs/models/` are generated automatically by the training scripts.
-
+- `10_collect_webcam_dataset.py` can help you capture more balanced webcam-style training images.

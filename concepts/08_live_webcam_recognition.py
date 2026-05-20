@@ -23,22 +23,44 @@ import numpy as np
 
 from shared.dataset import load_dataset
 from shared.math_helpers import flatten_matrix
-from shared.model_helpers import load_model, save_model, train_knn, train_pca
+from shared.model_helpers import save_model, train_knn, train_pca
 from shared.utils import (
     IMAGE_SIZE,
     PROJECT_ROOT,
     ensure_output_directories,
+    get_face_cascade,
     preprocess_image_array,
 )
 
 MODEL_DIR = PROJECT_ROOT / "outputs/models"
 KNN_MODEL_PATH = MODEL_DIR / "knn.pkl"
 PCA_MODEL_PATH = MODEL_DIR / "pca.pkl"
-UNKNOWN_DISTANCE_THRESHOLD = 6.0
+DEFAULT_UNKNOWN_DISTANCE_THRESHOLD = 3.0
 
 
-def prepare_models() -> tuple[Any, Any, list[str]]:
-    """Load or train the PCA and KNN models required for webcam recognition."""
+def estimate_unknown_threshold(X_projected: np.ndarray, y: np.ndarray) -> float:
+    """Estimate a reasonable unknown threshold from nearest same-label distances."""
+    same_label_distances: list[float] = []
+    for sample_index, sample in enumerate(X_projected):
+        label_mask = y == y[sample_index]
+        label_indices = np.where(label_mask)[0]
+        label_indices = label_indices[label_indices != sample_index]
+        if len(label_indices) == 0:
+            continue
+        comparison_vectors = X_projected[label_indices]
+        distances = np.linalg.norm(comparison_vectors - sample, axis=1)
+        same_label_distances.append(float(np.min(distances)))
+
+    if not same_label_distances:
+        return DEFAULT_UNKNOWN_DISTANCE_THRESHOLD
+
+    distance_array = np.asarray(same_label_distances, dtype=np.float32)
+    threshold = float(np.mean(distance_array) + 1.5 * np.std(distance_array))
+    return max(threshold, DEFAULT_UNKNOWN_DISTANCE_THRESHOLD)
+
+
+def prepare_models() -> tuple[Any, Any, list[str], float]:
+    """Train PCA and KNN models from the current dataset for best live accuracy."""
     X, y, label_names = load_dataset()
     if len(np.unique(y)) < 2:
         raise ValueError(
@@ -46,52 +68,19 @@ def prepare_models() -> tuple[Any, Any, list[str]]:
             "Add another person before using the webcam demo."
         )
 
-    pca = None
-    knn = None
-
-    if PCA_MODEL_PATH.exists():
-        try:
-            pca = load_model(PCA_MODEL_PATH)
-            print(f"[08] Loaded PCA model from: {PCA_MODEL_PATH}")
-        except Exception as error:  # pragma: no cover - defensive logging
-            print(f"[08] Could not load PCA model: {error}")
-
-    if pca is None:
-        pca = train_pca(X, n_components=50)
-        save_model(pca, PCA_MODEL_PATH)
-        print(f"[08] Trained and saved PCA model to: {PCA_MODEL_PATH}")
-
+    print("[08] Training fresh PCA and KNN models from the current dataset...")
+    pca = train_pca(X, n_components=50)
     X_projected = pca.transform(X)
+    knn = train_knn(X_projected, y, n_neighbors=3)
+    unknown_threshold = estimate_unknown_threshold(X_projected, y)
 
-    if KNN_MODEL_PATH.exists():
-        try:
-            candidate = load_model(KNN_MODEL_PATH)
-            if getattr(candidate, "n_features_in_", None) == X_projected.shape[1]:
-                knn = candidate
-                print(f"[08] Loaded KNN model from: {KNN_MODEL_PATH}")
-            else:
-                print(
-                    "[08] Existing KNN model uses a different feature space. "
-                    "Retraining it for PCA features."
-                )
-        except Exception as error:  # pragma: no cover - defensive logging
-            print(f"[08] Could not load KNN model: {error}")
-
-    if knn is None:
-        knn = train_knn(X_projected, y, n_neighbors=1)
-        save_model(knn, KNN_MODEL_PATH)
-        print(f"[08] Trained and saved KNN model to: {KNN_MODEL_PATH}")
-
-    return pca, knn, label_names
-
-
-def get_face_cascade() -> cv2.CascadeClassifier:
-    """Load the default OpenCV Haar cascade for frontal face detection."""
-    cascade_path = Path(cv2.data.haarcascades) / "haarcascade_frontalface_default.xml"
-    cascade = cv2.CascadeClassifier(str(cascade_path))
-    if cascade.empty():
-        raise RuntimeError(f"Could not load Haar cascade from: {cascade_path}")
-    return cascade
+    save_model(pca, PCA_MODEL_PATH)
+    save_model(knn, KNN_MODEL_PATH)
+    print(f"[08] Saved PCA model to: {PCA_MODEL_PATH}")
+    print(f"[08] Saved KNN model to: {KNN_MODEL_PATH}")
+    print(f"[08] PCA feature size: {pca.n_components_}")
+    print(f"[08] Estimated unknown threshold: {unknown_threshold:.2f}")
+    return pca, knn, label_names, unknown_threshold
 
 
 def main() -> int:
@@ -104,8 +93,8 @@ def main() -> int:
     ensure_output_directories()
 
     try:
-        pca, knn, label_names = prepare_models()
-    except (FileNotFoundError, ValueError) as error:
+        pca, knn, label_names, unknown_threshold = prepare_models()
+    except (FileNotFoundError, ValueError, RuntimeError) as error:
         print(f"[08] {error}")
         return 0
 
@@ -136,7 +125,14 @@ def main() -> int:
         )
 
         for (x_coord, y_coord, width, height) in detections:
-            face_region = frame[y_coord : y_coord + height, x_coord : x_coord + width]
+            padding_x = int(width * 0.25)
+            padding_y = int(height * 0.25)
+            x_start = max(0, x_coord - padding_x)
+            y_start = max(0, y_coord - padding_y)
+            x_end = min(frame.shape[1], x_coord + width + padding_x)
+            y_end = min(frame.shape[0], y_coord + height + padding_y)
+
+            face_region = frame[y_start:y_end, x_start:x_end]
             matrix = preprocess_image_array(face_region)
             vector = flatten_matrix(matrix)
             projected = pca.transform(vector.reshape(1, -1))
@@ -144,7 +140,7 @@ def main() -> int:
             neighbor_distances, _ = knn.kneighbors(projected, return_distance=True)
             distance = float(neighbor_distances[0][0])
 
-            if distance > UNKNOWN_DISTANCE_THRESHOLD:
+            if distance > unknown_threshold:
                 predicted_name = "Unknown"
                 box_color = (0, 0, 255)
             else:
@@ -160,6 +156,7 @@ def main() -> int:
                 f"Vector: {IMAGE_SIZE[0] * IMAGE_SIZE[1]}",
                 f"PCA: {pca.n_components_}",
                 f"Distance: {distance:.2f}",
+                f"Threshold: {unknown_threshold:.2f}",
             ]
 
             for line_index, text in enumerate(overlays):

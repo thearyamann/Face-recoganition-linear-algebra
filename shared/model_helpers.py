@@ -14,7 +14,7 @@ from shared.utils import PROJECT_ROOT, ensure_output_directories
 
 
 def train_knn(
-    X: np.ndarray, y: np.ndarray, n_neighbors: int = 1
+    X: np.ndarray, y: np.ndarray, n_neighbors: int = 3
 ) -> KNeighborsClassifier:
     """Train a KNN classifier with a safe neighbor count."""
     if X.size == 0 or y.size == 0:
@@ -25,7 +25,11 @@ def train_knn(
         )
 
     effective_neighbors = min(n_neighbors, len(X))
-    model = KNeighborsClassifier(n_neighbors=effective_neighbors)
+    model = KNeighborsClassifier(
+        n_neighbors=effective_neighbors,
+        weights="distance",
+        metric="euclidean",
+    )
     model.fit(X, y)
     return model
 
@@ -38,7 +42,12 @@ def train_pca(X: np.ndarray, n_components: int = 50) -> PCA:
     if max_components < 1:
         raise ValueError("PCA needs at least one valid principal component.")
 
-    model = PCA(n_components=max_components, svd_solver="auto", random_state=42)
+    model = PCA(
+        n_components=max_components,
+        svd_solver="auto",
+        whiten=True,
+        random_state=42,
+    )
     model.fit(X)
     return model
 
