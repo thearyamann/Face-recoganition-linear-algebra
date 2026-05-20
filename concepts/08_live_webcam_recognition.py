@@ -98,6 +98,7 @@ def main() -> int:
     """Run the live webcam face recognition demo."""
     print("\n[08] Live Webcam Recognition")
     print("This demo recognizes faces in real time using matrices, vectors, PCA, and KNN.")
+    print("The camera preview is mirrored left-to-right for a natural laptop-camera view.")
     print("Press 'q' in the webcam window to quit.\n")
 
     ensure_output_directories()
@@ -127,6 +128,8 @@ def main() -> int:
             print("[08] Failed to read a frame from the webcam.")
             break
 
+        # Mirror the preview so it behaves like a typical laptop selfie camera.
+        frame = cv2.flip(frame, 1)
         grayscale_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         detections = face_cascade.detectMultiScale(
             grayscale_frame, scaleFactor=1.1, minNeighbors=5, minSize=(60, 60)
